@@ -1,6 +1,5 @@
 import express from "express";
 import "http-proxy-middleware";
-import { createProxyMiddleware } from "http-proxy-middleware";
 
 const app = express();
 const port: number = 8000;
@@ -12,10 +11,7 @@ app.get("/", (req: express.Request, res: express.Response) => {
 });
 
 app.get("/watch", async (req: express.Request, res: express.Response) => {
-    const vID: any = req.query.v;
-    if (typeof vID != "string") {
-        res.status(404).send();
-    }
+    const vID: string = req.query.v as string;
 
     const hasWatchedAlready: boolean = dailyVideos.has(vID);
 
@@ -24,31 +20,32 @@ app.get("/watch", async (req: express.Request, res: express.Response) => {
         return;
     }
 
-    fetch(`https://youtube.com/watch?v=${vID}`)
-        .then((response) => {
-            response.body.pipeTo(
-                new WritableStream({
-                    start() {
-                        res.statusCode = response.status;
-                        response.headers.forEach((v, n) => res.setHeader(n, v));
-                    },
-                    write(chunk) {
-                        res.write(chunk);
-                    },
-                    close() {
-                        // Adds video to store if response successful and the video is new
-                        if (!hasWatchedAlready && response.ok) {
-                            dailyVideos.add(vID);
-                        }
+    const reqHeaders: HeadersInit = new Headers();
 
-                        res.end();
-                    },
-                }),
-            );
-        })
-        .catch((err) => {
-            res.status(500).send(err);
-        });
+    Object.entries(req.headers).forEach(([k, v]) => {
+        reqHeaders.append(k, v as string);
+        reqHeaders.set("host", "youtube.com");
+    });
+
+    const ytResponse: Response = await fetch(
+        `https://youtube.com/watch?v=${vID}`,
+    );
+
+    if (!hasWatchedAlready && ytResponse.ok) {
+        dailyVideos.add(vID);
+    }
+
+    res.status(ytResponse.status).send(await ytResponse.text());
 });
 
-app.listen(port);
+app.all("/*", async (req, res) => {
+    const ytPath: string = req.url.replace(req.baseUrl, "");
+
+    const ytResponse: Response = await fetch(`https://youtube.com${ytPath}`);
+
+    res.status(ytResponse.status).send(ytResponse.text());
+});
+
+app.listen(port, () => {
+    console.log("Started tunneler on Port 8000");
+});
